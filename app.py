@@ -5,7 +5,7 @@ import json
 import time
 from datetime import datetime
 from io import BytesIO
-import os # <-- ADDED THIS LINE
+import os # <-- THIS LINE IS CRUCIAL
 
 # --- Safe Import of Supporting Libraries ---
 try:
@@ -292,7 +292,6 @@ def cached_generate_and_download_report(_user_data_tuple):
     career_recommendations = recommend_careers(client_profile, career_clusters)
     save_successful = save_results_to_gsheet(client_profile, career_recommendations)
     if not save_successful:
-        # Don't block the user from getting their report even if the save fails
         st.warning("Could not save results to the database, but you can still download your report.")
     return generate_pdf_report(client_profile, career_recommendations)
 
@@ -366,7 +365,7 @@ def other_page():
     st.header("🎯 Other Information")
     st.session_state.user_data['passion'] = st_tags(label='1. Your Passions', text='Press enter...', value=st.session_state.user_data.get('passion', []), maxtags=5, key='other1')
     st.session_state.user_data['big_problems'] = st_tags(label='2. Big Problems to Solve', text='Press enter...', value=st.session_state.user_data.get('big_problems', []), maxtags=5, key='other2')
-    st.session_state.user_data['topics_of_interest'] = st_tags(label='3. Frequent Topics of Interest', text='Press enter...', value=st.session_state.user_data.get('topics_of_interest', []), maxtags=5, key='other3')
+    st.session_state.user_data['topics_of_interest'] = st_tags(label='3. Frequent Topics of Interest', text='Press enter...', valuest.session_state.user_data.get('topics_of_interest', []), maxtags=5, key='other3')
 def report_page():
     st.header("✅ Final Step: Generate Your Report"); st.info("You've completed all sections! The final questions below relate to resources and opportunities, which can influence career path choices.")
     st.session_state.user_data['extra_benefit'] = st_tags(label='1. Career Advantages (e.g., family background, connections)', text='Press enter...', value=st.session_state.user_data.get('extra_benefit', []), maxtags=5, key='report1')
