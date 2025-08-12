@@ -365,7 +365,7 @@ def other_page():
     st.header("🎯 Other Information")
     st.session_state.user_data['passion'] = st_tags(label='1. Your Passions', text='Press enter...', value=st.session_state.user_data.get('passion', []), maxtags=5, key='other1')
     st.session_state.user_data['big_problems'] = st_tags(label='2. Big Problems to Solve', text='Press enter...', value=st.session_state.user_data.get('big_problems', []), maxtags=5, key='other2')
-    st.session_state.user_data['topics_of_interest'] = st_tags(label='3. Frequent Topics of Interest', text='Press enter...', valuest.session_state.user_data.get('topics_of_interest', []), maxtags=5, key='other3')
+    st.session_state.user_data['topics_of_interest'] = st_tags(label='3. Frequent Topics of Interest', text='Press enter...', value=st.session_state.user_data.get('topics_of_interest', []), maxtags=5, key='other3')
 def report_page():
     st.header("✅ Final Step: Generate Your Report"); st.info("You've completed all sections! The final questions below relate to resources and opportunities, which can influence career path choices.")
     st.session_state.user_data['extra_benefit'] = st_tags(label='1. Career Advantages (e.g., family background, connections)', text='Press enter...', value=st.session_state.user_data.get('extra_benefit', []), maxtags=5, key='report1')
