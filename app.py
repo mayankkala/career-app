@@ -1,28 +1,23 @@
 import streamlit as st
 import numpy as np
 import matplotlib.pyplot as plt
+import difflib
+from streamlit_tags import st_tags
+import google.generativeai as genai
 import json
-import time
-from datetime import datetime
-from io import BytesIO
 import os
-
-# --- Safe Import of Supporting Libraries ---
-try:
-    from reportlab.lib.pagesizes import letter
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image, PageBreak, BaseDocTemplate, PageTemplate, Frame, ListFlowable
-    from reportlab.lib import colors
-    from reportlab.lib.utils import ImageReader
-    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-    from reportlab.lib.units import inch
-    from reportlab.graphics.shapes import Drawing, Rect
-    from PIL import Image as PILImage
-    import google.generativeai as genai
-    import gspread
-    from oauth2client.service_account import ServiceAccountCredentials
-except ImportError as e:
-    st.error(f"A required library is missing. Please ensure your `requirements.txt` is correct. Missing library: {e.name}")
-    st.stop()
+import time
+from reportlab.lib.pagesizes import letter
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image, PageBreak, BaseDocTemplate, PageTemplate, Frame
+from reportlab.lib import colors
+from io import BytesIO
+from reportlab.lib.utils import ImageReader
+from reportlab.platypus import Image, ListFlowable
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import inch
+from datetime import date
+from reportlab.graphics.shapes import Drawing, Rect, Line, Circle
+from PIL import Image as PILImage
 
 # --- Safe Import of Questionnaire ---
 try:
@@ -32,46 +27,10 @@ except ImportError:
     st.stop()
 
 
-# --- Google Sheets Database Setup ---
-def save_results_to_gsheet(profile, recommendations):
-    try:
-        creds_json_str = os.environ.get("gcp_service_account")
-        if not creds_json_str:
-            st.error("Database Error: GCP service account credentials not found in environment.")
-            return False
-        creds_dict = json.loads(creds_json_str)
-        scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-        client = gspread.authorize(creds)
-        sheet = client.open("Career App Results").sheet1
-
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        name = profile.get('name', 'N/A')
-        age = profile.get('age', 'N/A')
-        email = profile.get('email', 'N/A')
-        
-        top_3 = recommendations[:3]
-        career1, score1 = (top_3[0][0], f"{top_3[0][1]:.0f}") if len(top_3) > 0 else ('N/A', 'N/A')
-        career2, score2 = (top_3[1][0], f"{top_3[1][1]:.0f}") if len(top_3) > 1 else ('N/A', 'N/A')
-        career3, score3 = (top_3[2][0], f"{top_3[2][1]:.0f}") if len(top_3) > 2 else ('N/A', 'N/A')
-
-        row = [timestamp, name, age, email, career1, score1, career2, score2, career3, score3]
-        sheet.append_row(row)
-        return True
-    except Exception as e:
-        st.error(f"Database Error: Could not save results to Google Sheets. Check sheet name and sharing permissions. Error: {e}")
-        return False
-
-# --- Gemini API & Secrets Setup ---
-try:
-    GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-    if not GEMINI_API_KEY:
-        raise ValueError("Gemini API Key not found in environment variables.")
-    genai.configure(api_key=GEMINI_API_KEY)
-    GEMINI_MODEL = 'gemini-1.5-flash'
-except Exception as e:
-    st.error(f"FATAL ERROR: Could not configure Gemini API. Error: {e}")
-    st.stop()
+# --- Gemini API Setup ---
+GEMINI_API_KEY = "AIzaSyCwEhM7qjRMEEIIpH79A_DlazXa5RozCSM"
+genai.configure(api_key=GEMINI_API_KEY)
+GEMINI_MODEL = 'gemini-1.5-flash'
 
 # --- Hardcoded Trait Definitions ---
 trait_definitions = {
@@ -108,6 +67,8 @@ trait_definitions = {
         'IVR': { 'meaning': "Indulgence vs. Restraint: Control of desires and impulses.", 'analysis': { 'low': "You are disciplined and prioritize social norms over personal gratification (Restraint).", 'medium': "You have a healthy balance between enjoying life and maintaining control.", 'high': "You value personal freedom, enjoying life, and expressing emotions freely (Indulgence)." } }
     }
 }
+
+# --- Fallback Content for API Failures ---
 fallback_content = {
     "development_plan": "- Seek a mentor in a field that interests you to gain practical insights.\n- Dedicate time to online courses or workshops to build specific technical skills.",
     "swot": {
@@ -115,34 +76,29 @@ fallback_content = {
     },
     "conclusion": "This report is a snapshot of your potential. Use these insights as a starting point to explore the recommended career paths and continue your journey of self-discovery."
 }
+
+# --- Apple-Inspired Colors ---
 apple_blue = colors.Color(0, 113/255, 227/255); apple_dark_gray = colors.Color(45/255, 45/255, 45/255); apple_light_gray = colors.Color(245/255, 245/255, 247/255); apple_green = colors.Color(52/255, 199/255, 89/255); apple_red = colors.Color(255/255, 69/255, 58/255); apple_orange = colors.Color(255/255, 159/255, 10/255); apple_teal = colors.Color(90/255, 200/255, 250/255);
+
+# --- Constants Block ---
 RIASEC = ["Realistic", "Investigative", "Artistic", "Social", "Enterprising", "Conventional"]; OCEAN = ["Openness", "Conscientiousness", "Extraversion", "Agreeableness", "Neuroticism"]; HOFSTEDE = ["PDI", "IDV", "MAS", "UAI", "LTO", "IVR"]; APTITUDE = ['V', 'Nu', 'Sp', 'LR', 'Me', 'Pe', 'Ab']
 APTITUDE_FULL_NAMES = {'V': 'Verbal', 'Nu': 'Numerical', 'Sp': 'Spatial', 'LR': 'Logical Reasoning', 'Me': 'Mechanical', 'Pe': 'Perceptual', 'Ab': 'Abstract'}
+hofstede_dimension_explanations = {"PDI": "Power Distance Index...", "IDV": "Individualism vs. Collectivism...", "MAS": "Masculinity vs. Femininity...", "UAI": "Uncertainty Avoidance Index...", "LTO": "Long-Term Orientation...", "IVR": "Indulgence vs. Restraint..."}
 SECTION_TRAITS = {'Aptitude': APTITUDE, 'OCEAN': OCEAN, 'RIASEC': RIASEC, 'Hofstede': HOFSTEDE}
 TRAIT_FULL_NAMES = {'R': 'Realistic', 'I': 'Investigative', 'A': 'Artistic', 'S': 'Social', 'E': 'Enterprising', 'C': 'Conventional', 'O': 'Openness', 'C': 'Conscientiousness', 'E': 'Extraversion', 'A': 'Agreeableness', 'N': 'Neuroticism', 'PDI': 'Power Distance Index', 'IDV': 'Individualism vs. Collectivism', 'MAS': 'Masculinity vs. Femininity', 'UAI': 'Uncertainty Avoidance Index', 'LTO': 'Long-Term Orientation', 'IVR': 'Indulgence vs. Restraint', 'V': 'Verbal', 'Nu': 'Numerical', 'Sp': 'Spatial', 'LR': 'Logical Reasoning', 'Me': 'Mechanical', 'Pe': 'Perceptual', 'Ab': 'Abstract'}
 
 # --- Utility Functions ---
-def prepare_client_profile(user_data):
-    profile = { 'name': user_data.get('name', ''), 'age': user_data.get('age', 0), 'status': user_data.get('class_or_occupation', ''), 'email': user_data.get('email', ''), 'phone': user_data.get('phone', ''), 'date': datetime.now().strftime("%Y-%m-%d")}
-    text_keys = ['hobbies', 'interests', 'skills', 'competitive_subjects', 'easy_tasks', 'passion', 'big_problems', 'topics_of_interest', 'extra_benefit', 'future_opportunities']
-    for key in text_keys:
-        if key in user_data and isinstance(user_data[key], str):
-            profile[key] = [item.strip() for item in user_data[key].split(',') if item.strip()]
-        else:
-            profile[key] = []
-    for section in SECTION_TRAITS.keys():
-        profile[section] = calculate_section_scores(section, user_data)
-    return profile
-
-def get_gemini_analysis(prompt, client_profile):
+@st.cache_data
+def get_gemini_analysis(_prompt_tuple):
+    prompt, data_str = _prompt_tuple
     try:
         model = genai.GenerativeModel(GEMINI_MODEL)
-        full_prompt = f"{prompt}\n\nHere is the relevant data for context:\n{json.dumps(client_profile)}"
+        full_prompt = f"{prompt}\n\nHere is the relevant data for context:\n{data_str}"
         response = model.generate_content(full_prompt)
         time.sleep(1.2)
         return response.text
     except Exception as e:
-        st.warning(f"Could not connect to Gemini API. Using fallback content. Error: {e}")
+        print(f"Error in Gemini API call: {e}")
         return None
 
 def calculate_section_scores(section_name, user_data):
@@ -160,6 +116,12 @@ def calculate_section_scores(section_name, user_data):
             trait_scores = [score_mapping.get(section_data.get(f"Hofstede_{trait}_{i}"), 5) for i in range(1, 6)]
             scores[trait] = sum(trait_scores) / len(trait_scores) if trait_scores else 0
     return scores
+
+def prepare_client_profile(user_data):
+    profile = { 'name': user_data.get('name', ''), 'age': user_data.get('age', 0), 'status': user_data.get('class_or_occupation', ''), 'email': user_data.get('email', ''), 'phone': user_data.get('phone', ''), 'date': date.today().strftime("%Y-%m-%d")}
+    for section in SECTION_TRAITS.keys():
+        profile[section] = calculate_section_scores(section, user_data)
+    return profile
 
 def recommend_careers(client_profile, career_clusters):
     recommendations = []
@@ -204,6 +166,9 @@ def header_footer(canvas, doc):
     canvas.setFont('Helvetica-Bold', 9)
     canvas.setFillColor(apple_blue)
     canvas.drawRightString(doc.width + doc.leftMargin, doc.height + doc.topMargin - 0.5 * inch, "Thinkareer")
+    canvas.setFont('Helvetica', 9)
+    canvas.setFillColor(colors.grey)
+    canvas.drawString(inch, doc.height + doc.topMargin - 0.5 * inch, "India's first AI based career report")
     canvas.line(inch, doc.height + doc.topMargin - 0.55 * inch, doc.width + doc.leftMargin, doc.height + doc.topMargin - 0.55 * inch)
     canvas.drawString(inch, 0.75 * inch, f"Page {doc.page}")
     canvas.restoreState()
@@ -231,7 +196,7 @@ def _build_trait_analysis_section(story, client_profile, styles, category, trait
         analysis_text = trait_definitions.get(category, {}).get(trait, {}).get('analysis', {}).get(score_cat, 'N/A')
         story.append(Paragraph(f"<b>Expert Analysis:</b> {analysis_text}", styles['AppleBody']))
         dev_plan_prompt = f"Based on a {score_cat} score in {trait} ({category}), suggest 2 very brief, one-line development points."
-        dev_plan = get_gemini_analysis(dev_plan_prompt, client_profile) or fallback_content["development_plan"]
+        dev_plan = get_gemini_analysis((dev_plan_prompt, json.dumps(client_profile))) or fallback_content["development_plan"]
         story.append(Paragraph(f"<b>Development Plan:</b>", styles['AppleBody'])); story.append(ListFlowable([Paragraph(p, styles['AppleList']) for p in dev_plan.split("\n") if p.strip()], bulletType='bullet')); story.append(Spacer(1, 0.4*inch))
     story.append(PageBreak())
 def _build_recommendations_section(story, career_recommendations, styles):
@@ -248,14 +213,14 @@ def _build_detailed_analysis_section(story, career_recommendations, client_profi
             "S": f"For a person with this profile, what is their single greatest STRENGTH for a career as a {career}? Be concise and explain why in one or two sentences.", "W": f"What is their single greatest WEAKNESS or challenge they would face in a career as a {career}? Be concise and explain why in one or two sentences.", "O": f"What is a key OPPORTUNITY this person could leverage in a {career} career, based on their profile? Be concise and explain why in one or two sentences.", "T": f"What is a potential THREAT or external obstacle they should watch out for in a {career} career? Be concise and explain why in one or two sentences."
         }
         for key, prompt in prompts.items():
-            response = get_gemini_analysis(prompt, client_profile) or fallback_content["swot"][key]
+            response = get_gemini_analysis((prompt, json.dumps(client_profile))) or fallback_content["swot"][key]
             swot_data.append([Paragraph(key, styles[f'SWOTKey_{key}']), Paragraph(response, styles['AppleBody'])])
         swot_table = Table(swot_data, colWidths=[0.5*inch, 5.7*inch], hAlign='LEFT')
         swot_table.setStyle(TableStyle([('VALIGN', (0,0), (-1,-1), 'TOP'), ('LINEBELOW', (0,0), (-1,-2), 1, colors.lightgrey), ('BOTTOMPADDING', (0,0), (-1,-1), 12), ('TOPPADDING', (0,1), (-1,-1), 12)]));
         story.append(swot_table); story.append(Spacer(1, 0.5*inch)); story.append(PageBreak())
 def _build_conclusion(story, client_profile, styles):
     story.append(Paragraph("Conclusion", styles['AppleH1'])); story.append(Spacer(1, 0.2*inch))
-    conclusion = get_gemini_analysis("Write a personalized, two-sentence conclusion for this career assessment report, encouraging the student.", client_profile) or fallback_content["conclusion"]
+    conclusion = get_gemini_analysis(("Write a personalized, two-sentence conclusion for this career assessment report, encouraging the student.", json.dumps(client_profile))) or fallback_content["conclusion"]
     story.append(Paragraph(conclusion, styles['AppleBody']))
 def generate_pdf_report(client_profile, career_recommendations):
     buffer = BytesIO(); doc = BaseDocTemplate(buffer, pagesize=letter, rightMargin=inch, leftMargin=inch, topMargin=inch, bottomMargin=inch); doc.client_name = client_profile['name'] 
@@ -270,6 +235,14 @@ def generate_pdf_report(client_profile, career_recommendations):
     for category, traits in SECTION_TRAITS.items(): _build_trait_analysis_section(story, client_profile, styles, category, traits)
     _build_recommendations_section(story, career_recommendations, styles); _build_detailed_analysis_section(story, career_recommendations, client_profile, styles); _build_conclusion(story, client_profile, styles)
     doc.build(story); buffer.seek(0); return buffer
+
+# --- Cached Report Generation ---
+@st.cache_data
+def cached_generate_and_download_report(_user_data_tuple):
+    user_data = dict(_user_data_tuple)
+    client_profile = prepare_client_profile(user_data)
+    career_recommendations = recommend_careers(client_profile, career_clusters)
+    return generate_pdf_report(client_profile, career_recommendations)
 
 # --- Streamlit UI Page Functions ---
 def introduction_page(): st.header("👋 Welcome to Your Career Discovery Journey"); st.markdown("This comprehensive assessment will help you understand your strengths, interests, and potential career paths. Please be honest and take your time.")
@@ -303,194 +276,99 @@ def academic_scores_page():
         st.subheader(year); cols = st.columns(3)
         for j, subject in enumerate(subjects):
             with cols[j]: st.session_state.user_data['scores'][f"{year}_{subject}"] = st.selectbox(f"{subject}", score_options, index=score_options.index(st.session_state.user_data['scores'].get(f"{year}_{subject}", "<60%")), key=f"select_{year}_{subject}")
-
-# MAJOR UI FIX: REMOVED ALL ST.EXPANDER CALLS
 def aptitude_page():
-    st.header("🧠 Aptitude Assessment"); st.info("Answer based on your ability. There is one correct answer per question."); 
-    aptitude_data = st.session_state.user_data.setdefault('Aptitude', {})
+    st.header("🧠 Aptitude Assessment"); st.info("Answer based on your ability. There is one correct answer per question."); aptitude_data = st.session_state.user_data.setdefault('Aptitude', {})
     for trait in APTITUDE:
-        st.subheader(f"{APTITUDE_FULL_NAMES[trait]} Aptitude")
-        for i, (q, opts, ans) in enumerate(aptitude_questions.get(trait, []), 1): 
-            aptitude_data[f"aptitude_{trait}_{i}"] = st.radio(f"{i}. {q}", opts, key=f"apt_{trait}_{i}", horizontal=True, index=opts.index(aptitude_data.get(f"aptitude_{trait}_{i}", opts[0])))
-        st.markdown("---")
+        with st.expander(f"{APTITUDE_FULL_NAMES[trait]} Aptitude"):
+            for i, (q, opts, ans) in enumerate(aptitude_questions.get(trait, []), 1): aptitude_data[f"aptitude_{trait}_{i}"] = st.radio(f"{i}. {q}", opts, key=f"apt_{trait}_{i}", horizontal=True, index=opts.index(aptitude_data.get(f"aptitude_{trait}_{i}", opts[0])))
     if st.button("Calculate & Save Aptitude Scores", use_container_width=True):
         scores = {}
         for trait in APTITUDE: scores[trait] = sum(1 for i,(_,_,correct) in enumerate(aptitude_questions[trait],1) if aptitude_data.get(f"aptitude_{trait}_{i}") == correct) / len(aptitude_questions[trait]) * 100
         st.session_state.user_data['Aptitude'].update(scores); st.success("Aptitude scores saved!")
 def interest_page():
-    st.header("❤️ Interest Check (RIASEC)"); st.info("Indicate your level of interest for each activity."); 
-    riasec_data = st.session_state.user_data.setdefault('RIASEC', {})
+    st.header("❤️ Interest Check (RIASEC)"); st.info("Indicate your level of interest for each activity."); riasec_data = st.session_state.user_data.setdefault('RIASEC', {})
     for trait in RIASEC:
-        st.subheader(trait)
-        for i, (q, opts) in enumerate(questions['RIASEC'][trait], 1): 
-            riasec_data[f"RIASEC_{trait}_{i}"] = st.select_slider(f"{i}. {q}", opts, key=f"ria_{trait}_{i}", value=riasec_data.get(f"RIASEC_{trait}_{i}", opts[len(opts)//2]))
-        st.markdown("---")
+        with st.expander(trait):
+            for i, (q, opts) in enumerate(questions['RIASEC'][trait], 1): riasec_data[f"RIASEC_{trait}_{i}"] = st.select_slider(f"{i}. {q}", opts, key=f"ria_{trait}_{i}", value=riasec_data.get(f"RIASEC_{trait}_{i}", opts[len(opts)//2]))
 def personality_page():
-    st.header("👤 Personality Check (OCEAN)"); st.info("Indicate how well each statement describes you."); 
-    ocean_data = st.session_state.user_data.setdefault('OCEAN', {})
+    st.header("👤 Personality Check (OCEAN)"); st.info("Indicate how well each statement describes you."); ocean_data = st.session_state.user_data.setdefault('OCEAN', {})
     for trait in OCEAN:
-        st.subheader(trait)
-        for i, (q, opts) in enumerate(questions['OCEAN'][trait], 1): 
-            ocean_data[f"OCEAN_{trait}_{i}"] = st.select_slider(f"{i}. {q}", opts, key=f"oc_{trait}_{i}", value=ocean_data.get(f"OCEAN_{trait}_{i}", opts[len(opts)//2]))
-        st.markdown("---")
+        with st.expander(trait):
+            for i, (q, opts) in enumerate(questions['OCEAN'][trait], 1): ocean_data[f"OCEAN_{trait}_{i}"] = st.select_slider(f"{i}. {q}", opts, key=f"oc_{trait}_{i}", value=ocean_data.get(f"OCEAN_{trait}_{i}", opts[len(opts)//2]))
 def culture_page():
-    st.header("🌍 Cultural Values (Hofstede)"); st.info("Indicate your agreement with each statement."); 
-    hofstede_data = st.session_state.user_data.setdefault('Hofstede', {})
+    st.header("🌍 Cultural Values (Hofstede)"); st.info("Indicate your agreement with each statement."); hofstede_data = st.session_state.user_data.setdefault('Hofstede', {})
     for trait in HOFSTEDE:
-        st.subheader(TRAIT_FULL_NAMES[trait])
-        for i, (q, opts) in enumerate(questions['Hofstede'][trait], 1): 
-            hofstede_data[f"Hofstede_{trait}_{i}"] = st.select_slider(f"{i}. {q}", opts, key=f"hof_{trait}_{i}", value=hofstede_data.get(f"Hofstede_{trait}_{i}", opts[len(opts)//2]))
-        st.markdown("---")
-
+        with st.expander(f"{TRAIT_FULL_NAMES[trait]}"):
+            for i, (q, opts) in enumerate(questions['Hofstede'][trait], 1): hofstede_data[f"Hofstede_{trait}_{i}"] = st.select_slider(f"{i}. {q}", opts, key=f"hof_{trait}_{i}", value=hofstede_data.get(f"Hofstede_{trait}_{i}", opts[len(opts)//2]))
 def section_b_page(): st.header("Section B: Personal Profile"); st.info("The next few pages will explore your personal interests, skills, and aspirations.")
 def hobbies_interests_page():
-    st.header("🎨 Hobbies and Interests")
-    help_text = "Enter items separated by commas (e.g., Reading, Cooking, Hiking)"
-    st.session_state.user_data['hobbies'] = st.text_area("Enter your hobbies:", value=st.session_state.user_data.get('hobbies', ""), key='hobbies', help=help_text)
-    st.session_state.user_data['interests'] = st.text_area("Enter your interest areas:", value=st.session_state.user_data.get('interests', ""), key='interests', help=help_text)
+    st.header("🎨 Hobbies and Interests"); col1, col2 = st.columns(2);
+    with col1: st.session_state.user_data['hobbies'] = st_tags(label='Enter your hobbies:', text='Press enter...', value=st.session_state.user_data.get('hobbies', []), maxtags=5, key='hobbies')
+    with col2: st.session_state.user_data['interests'] = st_tags(label='Enter your interest areas:', text='Press enter...', value=st.session_state.user_data.get('interests', []), maxtags=5, key='interests')
 def subjects_page():
     st.header("💡 Subjects and Skills")
-    help_text = "Enter items separated by commas (e.g., Python, Public Speaking)"
-    st.session_state.user_data['skills'] = st.text_area("1. Your practical skills", value=st.session_state.user_data.get('skills', ""), key='skills1', help=help_text)
-    st.session_state.user_data['competitive_subjects'] = st.text_area("2. Easy competitive subjects", value=st.session_state.user_data.get('competitive_subjects', ""), key='skills2', help=help_text)
-    st.session_state.user_data['easy_tasks'] = st.text_area("3. Tasks you find easy", value=st.session_state.user_data.get('easy_tasks', ""), key='skills3', help=help_text)
+    st.session_state.user_data['skills'] = st_tags(label='1. Your practical skills (max 5)', text='Press enter...', value=st.session_state.user_data.get('skills', []), maxtags=5, key='skills1')
+    st.session_state.user_data['competitive_subjects'] = st_tags(label='2. Easy competitive subjects (max 5)', text='Press enter...', value=st.session_state.user_data.get('competitive_subjects', []), maxtags=5, key='skills2')
+    st.session_state.user_data['easy_tasks'] = st_tags(label='3. Tasks you find easy (max 5)', text='Press enter...', value=st.session_state.user_data.get('easy_tasks', []), maxtags=5, key='skills3')
 def other_page():
     st.header("🎯 Other Information")
-    help_text = "Enter items separated by commas"
-    st.session_state.user_data['passion'] = st.text_area("1. Your Passions", value=st.session_state.user_data.get('passion', ""), key='other1', help=help_text)
-    st.session_state.user_data['big_problems'] = st.text_area("2. Big Problems to Solve", value=st.session_state.user_data.get('big_problems', ""), key='other2', help=help_text)
-    st.session_state.user_data['topics_of_interest'] = st.text_area("3. Frequent Topics of Interest", value=st.session_state.user_data.get('topics_of_interest', ""), key='other3', help=help_text)
-
-# MAJOR LOGIC FIX: Prevent page reset on download
+    st.session_state.user_data['passion'] = st_tags(label='1. Your Passions', text='Press enter...', value=st.session_state.user_data.get('passion', []), maxtags=5, key='other1')
+    st.session_state.user_data['big_problems'] = st_tags(label='2. Big Problems to Solve', text='Press enter...', value=st.session_state.user_data.get('big_problems', []), maxtags=5, key='other2')
+    st.session_state.user_data['topics_of_interest'] = st_tags(label='3. Frequent Topics of Interest', text='Press enter...', value=st.session_state.user_data.get('topics_of_interest', []), maxtags=5, key='other3')
 def report_page():
     st.header("✅ Final Step: Generate Your Report"); st.info("You've completed all sections! The final questions below relate to resources and opportunities, which can influence career path choices.")
-    help_text = "Enter items separated by commas"
-    st.session_state.user_data['extra_benefit'] = st.text_area('1. Career Advantages (e.g., family background, connections)', value=st.session_state.user_data.get('extra_benefit', ""), key='report1', help=help_text)
-    st.session_state.user_data['future_opportunities'] = st.text_area('2. Future Opportunities You See', value=st.session_state.user_data.get('future_opportunities', ""), key='report2', help=help_text)
+    st.session_state.user_data['extra_benefit'] = st_tags(label='1. Career Advantages (e.g., family background, connections)', text='Press enter...', value=st.session_state.user_data.get('extra_benefit', []), maxtags=5, key='report1')
+    st.session_state.user_data['future_opportunities'] = st_tags(label='2. Future Opportunities You See', text='Press enter...', value=st.session_state.user_data.get('future_opportunities', []), maxtags=5, key='report2')
     st.subheader("3. Financial Considerations"); st.session_state.user_data['financial_condition'] = st.radio("Financial condition:", ['Low', 'Mid', 'Rich'], index=['Low', 'Mid', 'Rich'].index(st.session_state.user_data.get('financial_condition', 'Mid')), horizontal=True)
     st.markdown("---")
-
-    if 'pdf_buffer' not in st.session_state:
-        st.session_state.pdf_buffer = None
-
-    if st.button("Generate My Report & Save Results", use_container_width=True, type="primary"):
-        if not st.session_state.user_data.get('name') or not st.session_state.user_data.get('email'):
-            st.error("Please enter your name and email on the 'Basic Information' page.")
+    if st.button("Generate My Report", use_container_width=True, type="primary"):
+        if not st.session_state.user_data.get('name'): st.error("Please enter your name on the 'Basic Information' page.")
         else:
-            with st.spinner("Analyzing your results... This may take a moment."):
-                client_profile = prepare_client_profile(st.session_state.user_data)
-                recommendations = recommend_careers(client_profile, career_clusters)
-                save_successful = save_results_to_gsheet(client_profile, recommendations)
-                if not save_successful:
-                    st.warning("Could not save results to the database, but you can still download your report.")
-                
-                st.session_state.pdf_buffer = generate_pdf_report(client_profile, recommendations)
-
-            if st.session_state.pdf_buffer:
-                st.success("Success! Your report is ready for download below.")
-            else:
-                st.error("Failed to generate PDF report. Please check for errors above.")
-    
-    if st.session_state.pdf_buffer:
-        st.download_button(
-            label="🎉 Download Your Career Report!",
-            data=st.session_state.pdf_buffer,
-            file_name=f"Career_Report_{st.session_state.user_data.get('name', 'User').replace(' ', '_')}.pdf",
-            mime="application/pdf",
-            use_container_width=True
-        )
+            with st.spinner("Generating your personalized report... This involves multiple AI calls and may take up to a minute. Please be patient."):
+                user_data_tuple = tuple(sorted(st.session_state.user_data.items(), key=lambda item: str(item[0])))
+                pdf_buffer = cached_generate_and_download_report(user_data_tuple)
+            if pdf_buffer:
+                st.download_button(label="🎉 Download Your Career Report!", data=pdf_buffer, file_name=f"Career_Report_{st.session_state.user_data.get('name', 'User')}.pdf", mime="application/pdf", use_container_width=True)
+                st.success("Your report is ready!")
+            else: st.error("Failed to generate PDF report. Please check for Gemini API errors above.")
 
 # --- Main App Logic ---
 def main():
-    st.set_page_config(page_title="Career Discovery", page_icon="🚀", layout="wide")
-    
-    st.markdown("""
-        <style>
-            @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
-            html, body, [class*="st-"] { font-family: 'Inter', sans-serif; }
-            .stApp { background-color: #F0F2F6; }
-            .stTextArea textarea {height: 80px !important;}
-            .st-emotion-cache-16txtl3 { padding-top: 2rem; }
-            [data-testid="stHeader"] { background-color: #FFFFFF; border-bottom: 1px solid #E5E5E5; }
-            [data-testid="stSidebar"] { background-color: #FAFAFA; border-right: 1px solid #E5E5E5; }
-            .stButton>button {
-                border-radius: 0.5rem; font-weight: 600; border: 1px solid #0071E3;
-                background-color: #FFFFFF; color: #0071E3;
-            }
-            .stButton>button:hover { border-color: #0056b3; color: #0056b3; }
-            .st-emotion-cache-1ghh68j, .st-emotion-cache-gh2jqd {
-                background-color: #0071E3; color: white; border: none;
-            }
-            .st-emotion-cache-1ghh68j:hover, .st-emotion-cache-gh2jqd:hover {
-                 background-color: #0056b3; color: white;
-            }
-            .stProgress > div > div > div > div { background-image: linear-gradient(to right, #0071E3, #87CEFA); }
-            h1 { font-weight: 700; color: #1D1D1F; padding-bottom: 1rem; }
-            h2 { font-weight: 600; color: #1D1D1F; padding-top: 1rem;}
-            h3 { font-weight: 600; color: #1D1D1F; }
-        </style>
-    """, unsafe_allow_html=True)
+    st.set_page_config(page_title="Career Discovery", page_icon="🚀", layout="centered")
+    st.markdown("""<style> @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap'); html, body, [class*="st-"] { font-family: 'Inter', sans-serif; } body { background-color: #F0F2F6; } .stApp { background-color: #F0F2F6; } .main-container { background-color: white; padding: 2rem; border-radius: 1rem; box-shadow: 0 4px 12px rgba(0,0,0,0.1); } .stButton>button { border-radius: 0.5rem; font-weight: 600; } .stProgress > div > div > div > div { background-image: linear-gradient(to right, #0071E3, #87CEFA); } h1, h2, h3 { font-weight: 700; color: #1D1D1F; } .stRadio > div, .stSelectbox > div { background-color: #F0F2F6; padding: 1rem; border-radius: 0.5rem; } .st-emotion-cache-1y4p8pa { padding: 1rem; } .st-b7 { border: 1px solid #e6e6e6; } </style>""", unsafe_allow_html=True)
 
     if 'user_data' not in st.session_state: st.session_state.user_data = {}
     if 'page' not in st.session_state: st.session_state.page = 1
 
+    sidebar_options = {1: "Introduction", 2: "Basic Information", 3: "Current Status", 4: "Section A", 5: "Academic Scores", 6: "Aptitude Assessment", 7: "Interest Check (RIASEC)", 8: "Personality Check (OCEAN)", 9: "Cultural Values", 10: "Section B", 11: "Hobbies and Interests", 12: "Subjects", 13: "Other", 14: "Generate Report"}
+    TOTAL_PAGES = len(sidebar_options)
+
     with st.sidebar:
-        st.title("Uttam Career")
-        st.write("Navigate through the sections to complete your assessment.")
-        PAGES = {
-            "Introduction": 1, "Basic Information": 2, "Current Status": 3,
-            "Academic Scores": 4, 
-            "Aptitude Assessment": 5, 
-            "Interest (RIASEC)": 6, 
-            "Personality (OCEAN)": 7, 
-            "Cultural Values": 8,
-            "Hobbies & Interests": 9, 
-            "Subjects & Skills": 10, 
-            "Other Info": 11,
-            "Generate Report": 12
-        }
-        selection = st.radio("Sections", list(PAGES.keys()), index=st.session_state.page - 1, key="nav_radio")
-        st.session_state.page = PAGES[selection]
-        
+        st.title("Uttam Career"); st.write("Navigate through the sections to complete your assessment.")
+        selected_page_name = st.radio("Sections", sidebar_options.values(), index=st.session_state.page - 1, key="sidebar_nav")
+        st.session_state.page = list(sidebar_options.keys())[list(sidebar_options.values()).index(selected_page_name)]
         st.markdown("---")
         if st.button("Restart Assessment", use_container_width=True):
-            for key in list(st.session_state.keys()):
-                if key != 'page':
-                    del st.session_state[key]
-            st.session_state.page = 1
-            st.rerun()
+            st.session_state.clear(); st.rerun()
         st.info("Your progress is saved as you move between pages.")
 
-    main_container = st.container()
-    
-    with main_container:
-        TOTAL_PAGES = len(PAGES)
-        progress_percent = int(((st.session_state.page - 1) / (TOTAL_PAGES - 1)) * 100)
+    with st.container():
+        st.markdown('<div class="main-container">', unsafe_allow_html=True)
+        # The title is now part of the main container, removing any odd boxes above it.
+        st.title("Career Discovery"); st.markdown("---")
+        progress_percent = int(((st.session_state.page -1) / (TOTAL_PAGES -1)) * 100)
         st.progress(progress_percent, text=f"Step {st.session_state.page} of {TOTAL_PAGES}")
-        st.markdown("<hr>", unsafe_allow_html=True)
-
-        page_functions = {
-            1: introduction_page, 2: basic_information_page, 3: current_status_page,
-            4: academic_scores_page, 5: aptitude_page,
-            6: interest_page, 7: personality_page, 8: culture_page,
-            9: hobbies_interests_page, 10: subjects_page, 11: other_page,
-            12: report_page
-        }
         
+        page_functions = {1: introduction_page, 2: basic_information_page, 3: current_status_page, 4: section_a_page, 5: academic_scores_page, 6: aptitude_page, 7: interest_page, 8: personality_page, 9: culture_page, 10: section_b_page, 11: hobbies_interests_page, 12: subjects_page, 13: other_page, 14: report_page}
         page_functions[st.session_state.page]()
         
-        st.markdown("<br><br>", unsafe_allow_html=True)
         if st.session_state.page < TOTAL_PAGES:
-            st.markdown("---")
-            col1, col2, col3 = st.columns([1, 3, 1])
+            st.markdown("---"); col1, col2, col3 = st.columns([1, 1, 1])
             if st.session_state.page > 1:
-                if col1.button("⬅️ Previous", use_container_width=True):
-                    st.session_state.page -= 1
-                    st.rerun()
-            
-            if col3.button("Next ➡️", use_container_width=True, type="primary"):
-                st.session_state.page += 1
-                st.rerun()
+                if col1.button("⬅️ Previous", use_container_width=True): st.session_state.page -= 1; st.rerun()
+            if col3.button("Next ➡️", use_container_width=True, type="primary"): st.session_state.page += 1; st.rerun()
+        
+        st.markdown('</div>', unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
