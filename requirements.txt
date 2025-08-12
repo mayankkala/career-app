@@ -1,7 +1,6 @@
 streamlit
 numpy
 matplotlib
-streamlit-tags
 google-generativeai
 reportlab
 Pillow
