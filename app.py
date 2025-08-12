@@ -5,6 +5,7 @@ import json
 import time
 from datetime import datetime
 from io import BytesIO
+import os # <-- ADDED THIS LINE
 
 # --- Safe Import of Supporting Libraries ---
 try:
@@ -32,26 +33,28 @@ except ImportError:
     st.stop()
 
 
-# --- Google Sheets Database Setup ---
-# This function connects to Google Sheets and saves the data.
+# --- Google Sheets Database Setup (FIXED FOR RENDER) ---
 def save_results_to_gsheet(profile, recommendations):
     try:
-        # Use Streamlit's secrets management
-        creds_dict = st.secrets["gcp_service_account"]
+        # Get credentials from Render's environment variables
+        creds_json_str = os.environ.get("gcp_service_account")
+        if not creds_json_str:
+            st.error("Database Error: GCP service account credentials not found in environment. Please check Render setup.")
+            return False
+            
+        creds_dict = json.loads(creds_json_str)
+        
         scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
         
-        # Open the sheet by its name
         sheet = client.open("Career App Results").sheet1
 
-        # Prepare the data row
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         name = profile.get('name', 'N/A')
         age = profile.get('age', 'N/A')
         email = profile.get('email', 'N/A')
         
-        # Get top 3 careers
         top_3 = recommendations[:3]
         career1, score1 = (top_3[0][0], f"{top_3[0][1]:.0f}") if len(top_3) > 0 else ('N/A', 'N/A')
         career2, score2 = (top_3[1][0], f"{top_3[1][1]:.0f}") if len(top_3) > 1 else ('N/A', 'N/A')
@@ -61,17 +64,20 @@ def save_results_to_gsheet(profile, recommendations):
         sheet.append_row(row)
         return True
     except Exception as e:
-        st.error(f"Database Error: Could not save results to Google Sheets. Please check your setup. Error: {e}")
+        st.error(f"Database Error: Could not save results to Google Sheets. Check sheet name and sharing permissions. Error: {e}")
         return False
 
-# --- Gemini API & Secrets Setup ---
-# Use st.secrets for secure API key management
+# --- Gemini API & Secrets Setup (FIXED FOR RENDER) ---
 try:
-    GEMINI_API_KEY = st.secrets["gemini"]["api_key"]
+    # Get the API key from Render's environment variables
+    GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+    if not GEMINI_API_KEY:
+        raise ValueError("Gemini API Key not found in environment variables. Please check Render setup.")
+        
     genai.configure(api_key=GEMINI_API_KEY)
     GEMINI_MODEL = 'gemini-1.5-flash'
-except (KeyError, AttributeError):
-    st.error("Gemini API Key not found. Please add it to your Streamlit secrets.")
+except Exception as e:
+    st.error(f"FATAL ERROR: Could not configure Gemini API. Error: {e}")
     st.stop()
 
 # --- Hardcoded Trait Definitions (as provided) ---
@@ -284,8 +290,10 @@ def cached_generate_and_download_report(_user_data_tuple):
     user_data = dict(_user_data_tuple)
     client_profile = prepare_client_profile(user_data)
     career_recommendations = recommend_careers(client_profile, career_clusters)
-    # Save results to Google Sheet before generating the report
-    save_results_to_gsheet(client_profile, career_recommendations)
+    save_successful = save_results_to_gsheet(client_profile, career_recommendations)
+    if not save_successful:
+        # Don't block the user from getting their report even if the save fails
+        st.warning("Could not save results to the database, but you can still download your report.")
     return generate_pdf_report(client_profile, career_recommendations)
 
 # --- Streamlit UI Page Functions ---
@@ -384,89 +392,40 @@ def report_page():
 def main():
     st.set_page_config(page_title="Career Discovery", page_icon="🚀", layout="wide")
     
-    # APPLE-LIKE UI STYLES
     st.markdown("""
         <style>
             @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
-            
-            html, body, [class*="st-"] {
-                font-family: 'Inter', sans-serif;
-            }
-            
-            .st-emotion-cache-16txtl3 {
-                padding-top: 2rem;
-            }
-
-            .stApp {
-                background-color: #F0F2F6;
-            }
-
-            [data-testid="stHeader"] {
-                background-color: #FFFFFF;
-                border-bottom: 1px solid #E5E5E5;
-            }
-
-            [data-testid="stSidebar"] {
-                background-color: #FAFAFA;
-                border-right: 1px solid #E5E5E5;
-            }
-            
+            html, body, [class*="st-"] { font-family: 'Inter', sans-serif; }
+            .stApp { background-color: #F0F2F6; }
+            .st-emotion-cache-16txtl3 { padding-top: 2rem; }
+            [data-testid="stHeader"] { background-color: #FFFFFF; border-bottom: 1px solid #E5E5E5; }
+            [data-testid="stSidebar"] { background-color: #FAFAFA; border-right: 1px solid #E5E5E5; }
             .stButton>button {
-                border-radius: 0.5rem;
-                font-weight: 600;
-                border: 1px solid #0071E3;
-                background-color: #FFFFFF;
-                color: #0071E3;
+                border-radius: 0.5rem; font-weight: 600; border: 1px solid #0071E3;
+                background-color: #FFFFFF; color: #0071E3;
             }
-            
-            .stButton>button:hover {
-                border-color: #0056b3;
-                color: #0056b3;
-            }
-
+            .stButton>button:hover { border-color: #0056b3; color: #0056b3; }
             .st-emotion-cache-1ghh68j, .st-emotion-cache-gh2jqd {
-                background-color: #0071E3;
-                color: white;
-                border: none;
+                background-color: #0071E3; color: white; border: none;
             }
-            
             .st-emotion-cache-1ghh68j:hover, .st-emotion-cache-gh2jqd:hover {
-                 background-color: #0056b3;
-                 color: white;
+                 background-color: #0056b3; color: white;
             }
-
-            .stProgress > div > div > div > div {
-                background-image: linear-gradient(to right, #0071E3, #87CEFA);
-            }
-
-            h1 {
-                font-weight: 700;
-                color: #1D1D1F;
-                padding-bottom: 1rem;
-            }
-
-            h2, h3 {
-                font-weight: 600;
-                color: #1D1D1F;
-            }
-
+            .stProgress > div > div > div > div { background-image: linear-gradient(to right, #0071E3, #87CEFA); }
+            h1 { font-weight: 700; color: #1D1D1F; padding-bottom: 1rem; }
+            h2, h3 { font-weight: 600; color: #1D1D1F; }
             [data-testid="stExpander"] {
-                background-color: #FFFFFF;
-                border-radius: 0.75rem;
-                border: 1px solid #EAEAEA;
+                background-color: #FFFFFF; border-radius: 0.75rem; border: 1px solid #EAEAEA;
             }
-
         </style>
     """, unsafe_allow_html=True)
 
     if 'user_data' not in st.session_state: st.session_state.user_data = {}
     if 'page' not in st.session_state: st.session_state.page = 1
 
-    # --- Sidebar Navigation ---
     with st.sidebar:
         st.title("Uttam Career")
         st.write("Navigate through the sections to complete your assessment.")
-        
         PAGES = {
             "Introduction": 1, "Basic Information": 2, "Current Status": 3,
             "Academic & Aptitude": 4, "Academic Scores": 5, "Aptitude Assessment": 6,
@@ -474,9 +433,7 @@ def main():
             "Hobbies & Skills": 11, "Hobbies & Interests": 12, "Subjects & Skills": 13, "Other Info": 14,
             "Generate Report": 15
         }
-        
-        # This creates a "radio button" style navigation in the sidebar
-        selection = st.radio("Sections", list(PAGES.keys()), index=st.session_state.page - 1)
+        selection = st.radio("Sections", list(PAGES.keys()), index=st.session_state.page - 1, key="nav_radio")
         st.session_state.page = PAGES[selection]
         
         st.markdown("---")
@@ -485,7 +442,6 @@ def main():
             st.rerun()
         st.info("Your progress is saved as you move between pages.")
 
-    # --- Main Page Content ---
     main_container = st.container()
     
     with main_container:
@@ -498,15 +454,13 @@ def main():
             1: introduction_page, 2: basic_information_page, 3: current_status_page,
             4: section_a_page, 5: academic_scores_page, 6: aptitude_page,
             7: section_b_page, 8: interest_page, 9: personality_page, 10: culture_page,
-            11: section_b_page, # A little redundant, but keeps structure
-            12: hobbies_interests_page, 13: subjects_page, 14: other_page,
+            11: section_b_page, 12: hobbies_interests_page, 13: subjects_page, 14: other_page,
             15: report_page
         }
         
         page_functions[st.session_state.page]()
         
         st.markdown("<br><br>", unsafe_allow_html=True)
-        # --- Bottom Navigation Buttons ---
         if st.session_state.page < TOTAL_PAGES:
             st.markdown("---")
             col1, col2, col3 = st.columns([1, 3, 1])
