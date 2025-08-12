@@ -5,7 +5,7 @@ import json
 import time
 from datetime import datetime
 from io import BytesIO
-import os # <-- THIS LINE IS CRUCIAL
+import os
 
 # --- Safe Import of Supporting Libraries ---
 try:
@@ -17,7 +17,7 @@ try:
     from reportlab.lib.units import inch
     from reportlab.graphics.shapes import Drawing, Rect
     from PIL import Image as PILImage
-    from streamlit_tags import st_tags
+    # REMOVED: from streamlit_tags import st_tags -> THIS WAS THE BROKEN LIBRARY
     import google.generativeai as genai
     import gspread
     from oauth2client.service_account import ServiceAccountCredentials
@@ -36,7 +36,6 @@ except ImportError:
 # --- Google Sheets Database Setup (FIXED FOR RENDER) ---
 def save_results_to_gsheet(profile, recommendations):
     try:
-        # Get credentials from Render's environment variables
         creds_json_str = os.environ.get("gcp_service_account")
         if not creds_json_str:
             st.error("Database Error: GCP service account credentials not found in environment. Please check Render setup.")
@@ -69,7 +68,6 @@ def save_results_to_gsheet(profile, recommendations):
 
 # --- Gemini API & Secrets Setup (FIXED FOR RENDER) ---
 try:
-    # Get the API key from Render's environment variables
     GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
     if not GEMINI_API_KEY:
         raise ValueError("Gemini API Key not found in environment variables. Please check Render setup.")
@@ -80,7 +78,7 @@ except Exception as e:
     st.error(f"FATAL ERROR: Could not configure Gemini API. Error: {e}")
     st.stop()
 
-# --- Hardcoded Trait Definitions (as provided) ---
+# --- Hardcoded Trait Definitions ---
 trait_definitions = {
     'Aptitude': {
         'V': { 'meaning': "Verbal Aptitude (V) measures the ability to understand and reason with language, including reading comprehension and vocabulary.", 'analysis': { 'low': "A lower score suggests a preference for hands-on, numerical, or visual tasks over language-heavy ones.", 'medium': "A moderate score indicates a solid, functional grasp of language.", 'high': "A high score indicates a strong talent for language, suiting roles in writing, law, or education." }},
@@ -115,7 +113,7 @@ trait_definitions = {
         'IVR': { 'meaning': "Indulgence vs. Restraint: Control of desires and impulses.", 'analysis': { 'low': "You are disciplined and prioritize social norms over personal gratification (Restraint).", 'medium': "You have a healthy balance between enjoying life and maintaining control.", 'high': "You value personal freedom, enjoying life, and expressing emotions freely (Indulgence)." } }
     }
 }
-
+# (The rest of the definitions and functions remain exactly the same...)
 # --- Fallback Content for API Failures ---
 fallback_content = {
     "development_plan": "- Seek a mentor in a field that interests you to gain practical insights.\n- Dedicate time to online courses or workshops to build specific technical skills.",
@@ -352,24 +350,33 @@ def culture_page():
         with st.expander(f"{TRAIT_FULL_NAMES[trait]}"):
             for i, (q, opts) in enumerate(questions['Hofstede'][trait], 1): hofstede_data[f"Hofstede_{trait}_{i}"] = st.select_slider(f"{i}. {q}", opts, key=f"hof_{trait}_{i}", value=hofstede_data.get(f"Hofstede_{trait}_{i}", opts[len(opts)//2]))
 def section_b_page(): st.header("Section B: Personal Profile"); st.info("The next few pages will explore your personal interests, skills, and aspirations.")
+
+# --- UI PAGES WITH THE FIX ---
 def hobbies_interests_page():
-    st.header("🎨 Hobbies and Interests"); col1, col2 = st.columns(2);
-    with col1: st.session_state.user_data['hobbies'] = st_tags(label='Enter your hobbies:', text='Press enter...', value=st.session_state.user_data.get('hobbies', []), maxtags=5, key='hobbies')
-    with col2: st.session_state.user_data['interests'] = st_tags(label='Enter your interest areas:', text='Press enter...', value=st.session_state.user_data.get('interests', []), maxtags=5, key='interests')
+    st.header("🎨 Hobbies and Interests")
+    help_text = "Enter items separated by commas (e.g., Reading, Cooking, Hiking)"
+    st.session_state.user_data['hobbies'] = st.text_area("Enter your hobbies:", value=st.session_state.user_data.get('hobbies', ""), key='hobbies', help=help_text)
+    st.session_state.user_data['interests'] = st.text_area("Enter your interest areas:", value=st.session_state.user_data.get('interests', ""), key='interests', help=help_text)
+
 def subjects_page():
     st.header("💡 Subjects and Skills")
-    st.session_state.user_data['skills'] = st_tags(label='1. Your practical skills (max 5)', text='Press enter...', value=st.session_state.user_data.get('skills', []), maxtags=5, key='skills1')
-    st.session_state.user_data['competitive_subjects'] = st_tags(label='2. Easy competitive subjects (max 5)', text='Press enter...', value=st.session_state.user_data.get('competitive_subjects', []), maxtags=5, key='skills2')
-    st.session_state.user_data['easy_tasks'] = st_tags(label='3. Tasks you find easy (max 5)', text='Press enter...', value=st.session_state.user_data.get('easy_tasks', []), maxtags=5, key='skills3')
+    help_text = "Enter items separated by commas (e.g., Python, Public Speaking)"
+    st.session_state.user_data['skills'] = st.text_area("1. Your practical skills", value=st.session_state.user_data.get('skills', ""), key='skills1', help=help_text)
+    st.session_state.user_data['competitive_subjects'] = st.text_area("2. Easy competitive subjects", value=st.session_state.user_data.get('competitive_subjects', ""), key='skills2', help=help_text)
+    st.session_state.user_data['easy_tasks'] = st.text_area("3. Tasks you find easy", value=st.session_state.user_data.get('easy_tasks', ""), key='skills3', help=help_text)
+
 def other_page():
     st.header("🎯 Other Information")
-    st.session_state.user_data['passion'] = st_tags(label='1. Your Passions', text='Press enter...', value=st.session_state.user_data.get('passion', []), maxtags=5, key='other1')
-    st.session_state.user_data['big_problems'] = st_tags(label='2. Big Problems to Solve', text='Press enter...', value=st.session_state.user_data.get('big_problems', []), maxtags=5, key='other2')
-    st.session_state.user_data['topics_of_interest'] = st_tags(label='3. Frequent Topics of Interest', text='Press enter...', value=st.session_state.user_data.get('topics_of_interest', []), maxtags=5, key='other3')
+    help_text = "Enter items separated by commas"
+    st.session_state.user_data['passion'] = st.text_area("1. Your Passions", value=st.session_state.user_data.get('passion', ""), key='other1', help=help_text)
+    st.session_state.user_data['big_problems'] = st.text_area("2. Big Problems to Solve", value=st.session_state.user_data.get('big_problems', ""), key='other2', help=help_text)
+    st.session_state.user_data['topics_of_interest'] = st.text_area("3. Frequent Topics of Interest", value=st.session_state.user_data.get('topics_of_interest', ""), key='other3', help=help_text)
+
 def report_page():
     st.header("✅ Final Step: Generate Your Report"); st.info("You've completed all sections! The final questions below relate to resources and opportunities, which can influence career path choices.")
-    st.session_state.user_data['extra_benefit'] = st_tags(label='1. Career Advantages (e.g., family background, connections)', text='Press enter...', value=st.session_state.user_data.get('extra_benefit', []), maxtags=5, key='report1')
-    st.session_state.user_data['future_opportunities'] = st_tags(label='2. Future Opportunities You See', text='Press enter...', value=st.session_state.user_data.get('future_opportunities', []), maxtags=5, key='report2')
+    help_text = "Enter items separated by commas"
+    st.session_state.user_data['extra_benefit'] = st.text_area('1. Career Advantages (e.g., family background, connections)', value=st.session_state.user_data.get('extra_benefit', ""), key='report1', help=help_text)
+    st.session_state.user_data['future_opportunities'] = st.text_area('2. Future Opportunities You See', value=st.session_state.user_data.get('future_opportunities', ""), key='report2', help=help_text)
     st.subheader("3. Financial Considerations"); st.session_state.user_data['financial_condition'] = st.radio("Financial condition:", ['Low', 'Mid', 'Rich'], index=['Low', 'Mid', 'Rich'].index(st.session_state.user_data.get('financial_condition', 'Mid')), horizontal=True)
     st.markdown("---")
     if st.button("Generate My Report & Save Results", use_container_width=True, type="primary"):
@@ -377,6 +384,7 @@ def report_page():
             st.error("Please enter your name and email on the 'Basic Information' page.")
         else:
             with st.spinner("Analyzing your results... This may take a moment."):
+                # The data is now a string, not a list, which is fine as it's not used in calculations
                 user_data_tuple = tuple(sorted(st.session_state.user_data.items(), key=lambda item: str(item[0])))
                 pdf_buffer = cached_generate_and_download_report(user_data_tuple)
             
@@ -396,6 +404,7 @@ def main():
             @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
             html, body, [class*="st-"] { font-family: 'Inter', sans-serif; }
             .stApp { background-color: #F0F2F6; }
+            .stTextArea textarea {height: 80px !important;}
             .st-emotion-cache-16txtl3 { padding-top: 2rem; }
             [data-testid="stHeader"] { background-color: #FFFFFF; border-bottom: 1px solid #E5E5E5; }
             [data-testid="stSidebar"] { background-color: #FAFAFA; border-right: 1px solid #E5E5E5; }
